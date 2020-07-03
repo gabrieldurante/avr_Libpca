@@ -214,6 +214,13 @@ void adc_temperature_sensor_enable();
 	_adc_result_assemble(__result)
 
 
+/**
+ * @brief read the convertion result from ADC
+ *
+ * @return ADC conversion result
+ */
+#define adc_get_interrupt_chan() \
+	ADMUX & ((1 << MUX3) | (1 << MUX2) | (1 << MUX1) | (1 << MUX0))
 
 #endif /* end of include guard: ADC_H_W6GMC45G */
 

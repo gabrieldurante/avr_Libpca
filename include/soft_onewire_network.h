@@ -24,7 +24,6 @@
 #include <soft_onewire.h>
 #include <stdint.h>
 
-#warning NOT IMPLEMENTED YET
 
 /**
  * @brief one wire device rom code identifier

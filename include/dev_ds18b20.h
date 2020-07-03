@@ -39,7 +39,6 @@
  */
 
 
-#warning SINGLEDROP support implemented only at the moment
 
 // ds18b20 specific commands
 #define DS18B20_CMD_ALARM_SEARCH 0xec
