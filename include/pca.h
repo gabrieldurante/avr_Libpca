@@ -3,6 +3,7 @@
 
 /* Copyright (C) 
  * 2013 - Tomasz Wisniewski
+ * 2020 - Gabriel Durante
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation; either version 2
@@ -121,6 +122,7 @@
 #include <common.h>
 
 #include <serial.h>
+#include <soft_serial.h>
 #include <slip.h>
 #include <timer_common.h>
 #include <tdelay_common.h>

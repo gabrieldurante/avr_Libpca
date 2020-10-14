@@ -85,6 +85,27 @@
  */
 #define SERIAL_TX_RING_SIZE 64
 
+// ============================ SOFT SERIAL PORT =======================================
+
+/**
+ * @brief change to 0 and rebuild if you do not need stats information
+ */
+#define SOFT_SERIAL_COLLECT_STATS 0
+
+/**
+ * @brief RX ring buffer size
+ *
+ * For high speeds and very busy applications one may consider increasing the RX ring buffer size
+ */
+#define SOFT_SERIAL_RX_RING_SIZE 64
+
+/**
+ * @brief TX ring buffer size
+ *
+ * For high speeds and very busy applications one may consider increasing the TX ring buffer size
+ */
+#define SOFT_SERIAL_TX_RING_SIZE 64
+
 // ============================ TIMERS/BEEPER =====================================
 
 /**
