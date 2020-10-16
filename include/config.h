@@ -106,6 +106,20 @@
  */
 #define SOFT_SERIAL_TX_RING_SIZE 64
 
+/**
+ * @brief Disable Soft Serial RX
+ *
+ */
+#define SOFT_SERIAL_DISABLE_RX 1
+
+/**
+ * @brief change to 0 if to disable timer 2 interrupts and routines
+ *
+ * In case user wants to define his own ISR for TIMER2_COMPA_vect, he should disable the library implementation
+ * Callbacks are exposed to be used externally
+ */
+#define SOFT_SERIAL_IMPLEMENT_T2_INT 1
+
 // ============================ TIMERS/BEEPER =====================================
 
 /**

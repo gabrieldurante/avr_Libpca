@@ -123,7 +123,7 @@ e_return soft_serial_init(volatile struct soft_serial *a_bus);
  */
 void soft_serial_install_stdio();
 
-
+#if SOFT_SERIAL_DISABLE_RX == 0
 /**
  * @brief check how many bytes are available, pending to be read 
  *
@@ -163,7 +163,7 @@ unsigned int soft_serial_recv(void *a_data, unsigned int a_size, unsigned char a
  * @return 1 if character available, 0 if not
  */
 unsigned char soft_serial_getc(unsigned char *a_data);
-
+#endif
 
 /**
  * @brief send data using interrupts
@@ -187,12 +187,14 @@ unsigned char soft_serial_send(void *a_data, unsigned int a_size, unsigned char 
 unsigned char soft_serial_sendc(unsigned char a_data);
 
 
+#if SOFT_SERIAL_DISABLE_RX == 0
 /**
  * @brief return soft_serial buffer context for RX (information and statistics about soft_serial port)
  *
  * @return soft_serial buffer info
  */
 volatile t_ssbuffer* soft_serial_get_rx_state();
+#endif
 
 
 /**
@@ -202,5 +204,24 @@ volatile t_ssbuffer* soft_serial_get_rx_state();
  */
 volatile t_ssbuffer* soft_serial_get_tx_state();
 
+#if SOFT_SERIAL_IMPLEMENT_T2_INT == 0
+/**
+ * @brief Soft Serial TX Callback
+ *
+ * 	Data is sent in this function (called by some timer ISR at 10us rate) and placed in the TX ring buffer - if there is still space available.
+ *
+ */
+void soft_serial_tx_callback(void);
+
+/**
+ * @brief Soft Serial RX Callback
+ *
+ * 	Data is received in this function (called by some timer ISR at 10us rate) and placed in the RX ring buffer - if there is still space available.
+ *
+ */
+#if SOFT_SERIAL_DISABLE_RX == 0
+void soft_serial_rx_callback(void);
+#endif
+#endif
 
 #endif /* __SOFT_SERIAL_H__ */

@@ -28,7 +28,6 @@
 #include <avr/interrupt.h>
 #include <util/atomic.h>
 #include <stdio.h>
-#include <string.h>
 
 #include <soft_serial.h>
 
@@ -63,12 +62,14 @@ struct soft_serial_ctx {
 	// internal timer control
 	volatile uint32_t baud_timer_compare;
 
-} ctx;
+} ctx = { 0 };
 
+#if SOFT_SERIAL_DISABLE_RX == 0
 /**
  * @brief soft_serial RX Ring Buffer definition
  */
 static volatile t_ssbuffer g_rx_buff;
+#endif
 
 /**
  * @brief soft_serial TX Ring Buffer definition
@@ -78,120 +79,154 @@ static volatile t_ssbuffer g_tx_buff;
 /* ================================================================================ */
 
 /**
+ * @brief Soft Serial TX Callback
+ *
+ * 	Data is sent in this function (called by some timer ISR) and placed in the TX ring buffer - if there is still space available.
+ *
+ */
+#if SOFT_SERIAL_IMPLEMENT_T2_INT == 1
+static
+#endif
+void soft_serial_tx_callback(void)
+{
+	// proceed if there still is data to be send
+	if (g_tx_buff.u.r.head != g_tx_buff.u.r.tail) {
+		// check if tx is busy
+		if (ctx.tx_busy) {
+			// check baud_timer_compare expire
+			if (--ctx.tx_timer_counter == 0) {
+				// send bits
+				if (ctx.tx_out & 0x01) {
+					GPIO_SET_HIGH(&ctx.bus->tx);
+				}
+				else {
+					GPIO_SET_LOW(&ctx.bus->tx);
+				}
+				// shift tx data
+				ctx.tx_out >>= 1;
+				// prepare next bit
+				ctx.tx_timer_counter = ctx.baud_timer_compare;
+				// check end of bits
+				if (--ctx.tx_bits_left == 0) {
+					// update ring
+					g_tx_buff.u.r.tail = (g_tx_buff.u.r.tail + 1) % SOFT_SERIAL_TX_RING_SIZE;
+					ctx.tx_busy = 0;
+				}
+			}
+		}
+		else {
+			// prepare transfer
+			ctx.tx_out = SOFT_SERIAL_TX_MASK(g_tx_buff.u.r.ring[g_tx_buff.u.r.tail]);
+			ctx.tx_bits_left = SOFT_SERIAL_TX_BITS;
+			ctx.tx_timer_counter = ctx.baud_timer_compare;
+			ctx.tx_busy = 1;
+		}
+#if SOFT_SERIAL_COLLECT_STATS == 1
+		g_tx_buff.stats.ok++;
+#endif
+	}
+}
+
+/**
+ * @brief Soft Serial RX Callback
+ *
+ * 	Data is received in this function (called by some timer ISR) and placed in the RX ring buffer - if there is still space available.
+ *
+ */
+#if SOFT_SERIAL_DISABLE_RX == 0
+#if SOFT_SERIAL_IMPLEMENT_T2_INT == 1
+static
+#endif
+void soft_serial_rx_callback(void)
+{
+	// if waiting for stop bit
+	if (ctx.rx_waiting_for_stop_bit) {
+		// check baud_timer_compare expire
+		if (--ctx.rx_timer_counter == 0) {
+			// calculate the next available ring buffer data bucket index
+			volatile unsigned char next =
+				((g_rx_buff.u.r.head + 1) % SOFT_SERIAL_RX_RING_SIZE);
+
+			// do not overflow the buffer
+			if (next != g_rx_buff.u.r.tail) {
+				g_rx_buff.u.r.ring[g_rx_buff.u.r.head] = ctx.rx_in;
+				g_rx_buff.u.r.head = next;			
+#if SOFT_SERIAL_COLLECT_STATS == 1
+				g_rx_buff.stats.ok++;
+#endif
+			}
+			else {
+#if SOFT_SERIAL_COLLECT_STATS == 1
+				// increase the dropped counter
+				g_rx_buff.stats.dropped++;
+#endif
+			}
+			ctx.rx_waiting_for_stop_bit = 0;
+			ctx.rx_ready = 0;
+		}
+	}
+	else {
+		// check if rx is ready
+		if (ctx.rx_ready == 0) {
+			// check for start bit
+			if (GPIO_GET(&ctx.bus->rx) == 0) {
+				// prepare receive
+				ctx.rx_bits_left = SOFT_SERIAL_RX_BITS;
+				ctx.rx_timer_counter = (ctx.baud_timer_compare + SOFT_SERIAL_RX_START_GAP);
+				ctx.rx_in = 0;
+				ctx.rx_waiting_for_stop_bit = 0;
+				ctx.rx_mask = 1;
+				ctx.rx_ready = 1;
+			}
+		}
+		else {
+			// check baud_timer_compare expire
+			if (--ctx.rx_timer_counter == 0) {
+				// get bit
+				if (GPIO_GET(&ctx.bus->rx)) {
+					ctx.rx_in |= ctx.rx_mask;
+				}
+
+				// shift rx data
+				ctx.rx_mask <<= 1;
+
+				// check end of bits
+				if (--ctx.rx_bits_left == 0) {
+					ctx.rx_waiting_for_stop_bit = 1;
+				}
+
+				// prepare next bit
+				ctx.rx_timer_counter = ctx.baud_timer_compare;
+			}
+		}
+	}
+}
+#endif
+
+/**
  * @brief Soft Serial interrupt
  *
  * Data is sent/received in this ISR and placed in the TX/RX ring buffer - if there is still space available.
  *  If statistics support is enabled those will be updated in this ISR as well
  *
- * @param USART_RX_vect
+ * @param TIMER2_COMPA_vect
  */
+#if SOFT_SERIAL_IMPLEMENT_T2_INT == 1
 ISR(TIMER2_COMPA_vect)
 {
 	// tx section
 	{
-		// proceed if there still is data to be send
-		if (g_tx_buff.u.r.head != g_tx_buff.u.r.tail) {
-			// check if tx is busy
-			if (ctx.tx_busy) {
-				// check baud_timer_compare expire
-				if (--ctx.tx_timer_counter == 0) {
-					// send bits
-					if (ctx.tx_out & 0x01) {
-						GPIO_SET_HIGH(&ctx.bus->tx);
-					}
-					else {
-						GPIO_SET_LOW(&ctx.bus->tx);
-					}
-					// shift tx data
-					ctx.tx_out >>= 1;
-					// prepare next bit
-					ctx.tx_timer_counter = ctx.baud_timer_compare;
-					// check end of bits
-					if (--ctx.tx_bits_left == 0) {
-						// update ring
-						g_tx_buff.u.r.tail = (g_tx_buff.u.r.tail + 1) % SOFT_SERIAL_TX_RING_SIZE;
-						ctx.tx_busy = 0;
-					}
-				}
-			}
-			else {
-				// prepare transfer
-				ctx.tx_out = SOFT_SERIAL_TX_MASK(g_tx_buff.u.r.ring[g_tx_buff.u.r.tail]);
-				ctx.tx_bits_left = SOFT_SERIAL_TX_BITS;
-				ctx.tx_timer_counter = ctx.baud_timer_compare;
-				ctx.tx_busy = 1;
-			}
-#if SOFT_SERIAL_COLLECT_STATS == 1
-			g_tx_buff.stats.ok++;
-#endif
-		}
+		soft_serial_tx_callback();
 	}
 
+#if SOFT_SERIAL_DISABLE_RX == 0
 	// rx section
 	{
-		// if waiting for stop bit
-		if (ctx.rx_waiting_for_stop_bit) {
-			// check baud_timer_compare expire
-			if (--ctx.rx_timer_counter == 0) {
-				// calculate the next available ring buffer data bucket index
-				volatile unsigned char next =
-					((g_rx_buff.u.r.head + 1) % SOFT_SERIAL_RX_RING_SIZE);
-
-				// do not overflow the buffer
-				if (next != g_rx_buff.u.r.tail) {
-					g_rx_buff.u.r.ring[g_rx_buff.u.r.head] = ctx.rx_in;
-					g_rx_buff.u.r.head = next;			
-#if SOFT_SERIAL_COLLECT_STATS == 1
-					g_rx_buff.stats.ok++;
-#endif
-				}
-				else {
-#if SOFT_SERIAL_COLLECT_STATS == 1
-					// increase the dropped counter
-					g_rx_buff.stats.dropped++;
-#endif
-				}
-				ctx.rx_waiting_for_stop_bit = 0;
-				ctx.rx_ready = 0;
-			}
-		}
-		else {
-			// check if rx is ready
-			if (ctx.rx_ready == 0) {
-				// check for start bit
-				if (GPIO_GET(&ctx.bus->rx) == 0) {
-					// prepare receive
-					ctx.rx_bits_left = SOFT_SERIAL_RX_BITS;
-					ctx.rx_timer_counter = (ctx.baud_timer_compare + SOFT_SERIAL_RX_START_GAP);
-					ctx.rx_in = 0;
-					ctx.rx_waiting_for_stop_bit = 0;
-					ctx.rx_mask = 1;
-					ctx.rx_ready = 1;
-				}
-			}
-			else {
-				// check baud_timer_compare expire
-				if (--ctx.rx_timer_counter == 0) {
-					// get bit
-					if (GPIO_GET(&ctx.bus->rx)) {
-						ctx.rx_in |= ctx.rx_mask;
-					}
-
-					// shift rx data
-					ctx.rx_mask <<= 1;
-
-					// check end of bits
-					if (--ctx.rx_bits_left == 0) {
-						ctx.rx_waiting_for_stop_bit = 1;
-					}
-
-					// prepare next bit
-					ctx.rx_timer_counter = ctx.baud_timer_compare;
-				}
-			}
-		}
+		soft_serial_rx_callback();
 	}
+#endif
 }
+#endif
 
 /* ================================================================================ */
 
@@ -211,7 +246,7 @@ static int _soft_serial_putc(char c, FILE *stream) {
 	return 0;
 }
 
-
+#if SOFT_SERIAL_DISABLE_RX == 0
 /**
  * @brief wrapper for stdio, just to make the soft_serial API interface compatible
  *
@@ -226,15 +261,12 @@ static int _soft_serial_getc(FILE *stream) {
 
 	return (char)c;
 }
-
+#endif
 
 /* ================================================================================ */
 
 
 e_return soft_serial_init(volatile struct soft_serial *a_bus) {
-	// reset context structure
-	memset(&ctx, 0, sizeof(ctx));
-
 	// set bus structure
 	ctx.bus = a_bus;
 
@@ -263,20 +295,28 @@ e_return soft_serial_init(volatile struct soft_serial *a_bus) {
 		break;
 	}
 
-	// rx/tx configure
+	// tx configure
 	GPIO_CONFIGURE_AS_OUTPUT(&a_bus->tx);
-	GPIO_CONFIGURE_AS_INPUT(&a_bus->rx);
 
 	/* set tx to high to avoid garbage on init */
 	GPIO_SET_HIGH(&a_bus->tx);
 
-	// clear the ring
-	uint16_t val = sizeof(g_rx_buff);
-	common_zero_mem(&g_rx_buff, val);
+	uint16_t val = 0;
 
+	// rx configure
+#if SOFT_SERIAL_DISABLE_RX == 0
+	GPIO_CONFIGURE_AS_INPUT(&a_bus->rx);
+
+	// clear the rx ring
+	val = sizeof(g_rx_buff);
+	common_zero_mem(&g_rx_buff, val);
+#endif
+
+	// clear the tx ring
 	val = sizeof(g_tx_buff);
 	common_zero_mem(&g_tx_buff, val);
 
+#if SOFT_SERIAL_IMPLEMENT_T2_INT == 1
 	// timer configure to interrupt in 10us
 	uint32_t pocr = _timer_freq_prescale(E_TIMER2, (100000/2), 255);
 
@@ -285,23 +325,24 @@ e_return soft_serial_init(volatile struct soft_serial *a_bus) {
 
 	// enable interrupt
 	_timer_en_compa_int(E_TIMER2);
+#endif
 
 	return RET_OK;
 }
 
 void soft_serial_install_stdio() {
 	static FILE uart_stdout = FDEV_SETUP_STREAM(_soft_serial_putc, NULL, _FDEV_SETUP_WRITE);
+#if SOFT_SERIAL_DISABLE_RX == 0
 	static FILE uart_stdin = FDEV_SETUP_STREAM(NULL, _soft_serial_getc, _FDEV_SETUP_READ);
-
-	stdout = &uart_stdout;
 	stdin = &uart_stdin;
+#endif
+	stdout = &uart_stdout;
 }
 
-
+#if SOFT_SERIAL_DISABLE_RX == 0
 inline unsigned char soft_serial_available() {
 	return (SOFT_SERIAL_RX_RING_SIZE + g_rx_buff.u.r.head - g_rx_buff.u.r.tail) % SOFT_SERIAL_RX_RING_SIZE;
 }
-
 
 unsigned char soft_serial_peek(void *a_data, unsigned char a_size) {
 	unsigned char read = soft_serial_available();
@@ -340,7 +381,6 @@ unsigned int soft_serial_recv(void *a_data, unsigned int a_size, unsigned char a
 	return read;
 }
 
-
 unsigned char soft_serial_getc(unsigned char *a_data) {
 	
 	if (g_rx_buff.u.r.head == g_rx_buff.u.r.tail)
@@ -351,7 +391,7 @@ unsigned char soft_serial_getc(unsigned char *a_data) {
 
 	return 1;
 }
-
+#endif
 
 unsigned char soft_serial_send(void *a_data, unsigned int a_size, unsigned char a_waitall) {
 	uint8_t n = 0x00;
@@ -411,11 +451,11 @@ unsigned char soft_serial_sendc(unsigned char a_data) {
 	return n;
 }
 
-
+#if SOFT_SERIAL_DISABLE_RX == 0
 volatile t_ssbuffer* soft_serial_get_rx_state() {
 	return &g_rx_buff;
 }
-
+#endif
 
 volatile t_ssbuffer* soft_serial_get_tx_state() {
 	return &g_tx_buff;
