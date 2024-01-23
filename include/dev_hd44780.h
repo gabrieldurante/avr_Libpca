@@ -185,7 +185,7 @@ struct dev_hd44780_ctx {
  * @param Display context
  */
 #define hd44780_clrscr(__disp) \
-	hd44780_cmd(a_disp, HD44780_CMD_CLRSCR()); \
+	hd44780_cmd(__disp, HD44780_CMD_CLRSCR()); \
 	_delay_us(1700)
 
 
